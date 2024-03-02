@@ -1,0 +1,498 @@
+#pragma region VEXcode Generated Robot Configuration
+// Make sure all required headers are included.
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <math.h>
+#include <string.h>
+
+#include "vex.h"
+
+using namespace vex;
+
+// Brain should be defined by default
+brain Brain;
+
+
+
+// Robot configuration code.
+
+motor RightMotorC = motor(PORT15, ratio6_1, true);
+
+motor RightMotorD = motor(PORT18, ratio6_1, true);
+
+motor LeftMotorC = motor(PORT5, ratio6_1, false);
+
+motor LeftMotorD = motor(PORT6, ratio6_1, true);
+
+
+digital_out intakeA = digital_out(Brain.ThreeWirePort.A);
+digital_out WingsB = digital_out(Brain.ThreeWirePort.B);
+controller Controller1 = controller(primary);
+motor leftMotorA = motor(PORT7, ratio6_1, false);
+motor leftMotorB = motor(PORT4, ratio6_1, false);
+motor_group LeftDriveSmart = motor_group(leftMotorA, leftMotorB, LeftMotorC, LeftMotorD);
+motor rightMotorA = motor(PORT14, ratio6_1, true);
+motor rightMotorB = motor(PORT17, ratio6_1, false);
+motor_group RightDriveSmart = motor_group(rightMotorA, rightMotorB, RightMotorC, RightMotorD);
+inertial DrivetrainInertial = inertial(PORT10);
+smartdrive Drivetrain = smartdrive(LeftDriveSmart, RightDriveSmart, DrivetrainInertial, 219.44, 320, 40, mm, 1);
+
+void calibrateDrivetrain()
+{
+    wait(200, msec);
+    Brain.Screen.print("Calibrating");
+    Brain.Screen.newLine();
+    Brain.Screen.print("Inertial");
+    DrivetrainInertial.calibrate();
+    while (DrivetrainInertial.isCalibrating())
+    {
+        wait(25, msec);
+    }
+
+    // Clears the screen and returns the cursor to row 1, column 1.
+    Brain.Screen.clearScreen();
+    Brain.Screen.setCursor(1, 1);
+}
+
+// define variable for remote controller enable/disable
+bool RemoteControlCodeEnabled = true;
+// define variables used for controlling motors based on controller inputs
+bool DrivetrainLNeedsToBeStopped_Controller1 = true;
+bool DrivetrainRNeedsToBeStopped_Controller1 = true;
+
+// define a task that will handle monitoring inputs from Controller1
+int rc_auto_loop_function_Controller1()
+{
+    // process the controller input every 20 milliseconds
+    // update the motors based on the input values
+    while (true)
+    {
+        if (RemoteControlCodeEnabled)
+        {
+            // stop the motors if the brain is calibrating
+            if (DrivetrainInertial.isCalibrating())
+            {
+                LeftDriveSmart.stop();
+                RightDriveSmart.stop();
+                while (DrivetrainInertial.isCalibrating())
+                {
+                    wait(25, msec);
+                }
+            }
+
+            // calculate the drivetrain motor velocities from the controller joystick axies
+            // left = Axis3
+            // right = Axis2
+            int drivetrainLeftSideSpeed = Controller1.Axis3.position();
+            int drivetrainRightSideSpeed = Controller1.Axis2.position();
+
+            // check if the value is inside of the deadband range
+            if (drivetrainLeftSideSpeed < 5 && drivetrainLeftSideSpeed > -5)
+            {
+                // check if the left motor has already been stopped
+                if (DrivetrainLNeedsToBeStopped_Controller1)
+                {
+                    // stop the left drive motor
+                    LeftDriveSmart.stop();
+                    // tell the code that the left motor has been stopped
+                    DrivetrainLNeedsToBeStopped_Controller1 = false;
+                }
+            }
+            else
+            {
+                // reset the toggle so that the deadband code knows to stop the left motor nexttime the input is in the deadband range
+                DrivetrainLNeedsToBeStopped_Controller1 = true;
+            }
+            // check if the value is inside of the deadband range
+            if (drivetrainRightSideSpeed < 5 && drivetrainRightSideSpeed > -5)
+            {
+                // check if the right motor has already been stopped
+                if (DrivetrainRNeedsToBeStopped_Controller1)
+                {
+                    // stop the right drive motor
+                    RightDriveSmart.stop();
+                    // tell the code that the right motor has been stopped
+                    DrivetrainRNeedsToBeStopped_Controller1 = false;
+                }
+            }
+            else
+            {
+                // reset the toggle so that the deadband code knows to stop the right motor next time the input is in the deadband range
+                DrivetrainRNeedsToBeStopped_Controller1 = true;
+            }
+
+            // only tell the left drive motor to spin if the values are not in the deadband range
+            if (DrivetrainLNeedsToBeStopped_Controller1)
+            {
+                LeftDriveSmart.setVelocity(drivetrainLeftSideSpeed, percent);
+                LeftDriveSmart.spin(forward);
+            }
+            // only tell the right drive motor to spin if the values are not in the deadband range
+            if (DrivetrainRNeedsToBeStopped_Controller1)
+            {
+                RightDriveSmart.setVelocity(drivetrainRightSideSpeed, percent);
+                RightDriveSmart.spin(forward);
+            }
+        }
+        // wait before repeating the process
+        wait(20, msec);
+    }
+    return 0;
+}
+
+task rc_auto_loop_task_Controller1(rc_auto_loop_function_Controller1);
+
+#pragma endregion VEXcode Generated Robot Configuration
+
+// Include the V5 Library
+#include "vex.h"
+#include <iostream>
+// Allows for easier use of the VEX Library
+using namespace vex;
+
+competition Competition;
+
+int Brain_precision = 0, Console_precision = 0, Controller1_precision = 0;
+
+float Intake, wings, timerr, ActualHeading, TargetHeading, error, MotorSpeed;
+
+// Left P Loop
+void turnLeftDegrees(double targetDegrees)
+{
+    // Proportional gain (Turn to much, make smaller, Turn to little, make bigger)
+    double kP = 0.431; // 432
+
+    // Dead zone for the loop
+    int deadzone = 2;
+
+    // The slowist speed the Loop start with.
+    double minMotorSpeed = 6.0;
+
+    // Calculate target heading
+    double targetHeading = Drivetrain.heading() - targetDegrees;
+
+    // Ensure targetHeading is within the range [0, 360)
+    if (targetHeading < 0)
+    {
+        targetHeading += 360.0;
+    }
+    else if (targetHeading >= 360.0)
+    {
+        targetHeading -= 360.0;
+    }
+
+    // Turn left until the target heading is reached
+    while (true)
+    {
+        // Calculate error
+        double error = targetHeading - Drivetrain.heading();
+
+        // Ensure error is within the range [-180, 180)
+        if (error < -180.0)
+        {
+            error += 360.0;
+        }
+        else if (error >= 180.0)
+        {
+            error -= 360.0;
+        }
+
+        // Apply dead zone
+        if (fabs(error) < deadzone)
+        {
+            error = 0.0;
+        }
+
+        // Calculate motor speed based on error
+        double motorSpeed = error * kP;
+
+        // Decrease motor speed as error decreases
+        motorSpeed *= fabs(error / targetDegrees);
+
+        if (fabs(motorSpeed) < minMotorSpeed)
+        {
+            motorSpeed = copysign(minMotorSpeed, motorSpeed);
+        }
+
+        // Set the motor speeds for left turn
+        LeftDriveSmart.setVelocity(motorSpeed, percent);
+        RightDriveSmart.setVelocity(-motorSpeed, percent); // Reverse the direction
+
+        // Spin the motors for left turn
+        LeftDriveSmart.spin(forward);
+        RightDriveSmart.spin(forward);
+
+        // Break the loop if the target heading is reached
+        if (fabs(error) < 2.0)
+        {
+            Drivetrain.setDriveVelocity(150.0, percent);
+            Drivetrain.stop();
+            break;
+        }
+
+        // Wait for a short duration
+        wait(5, msec);
+    }
+
+    // Stop the drivetrain
+    Drivetrain.stop();
+}
+
+// Right P loop
+void turnRightDegrees(double targetDegrees)
+{
+    // Proportional gain (Turn to much, make smaller, Turn to little, make bigger)
+    double kP = 0.431; // 432
+
+    // Dead zone for the Loop
+    int deadzone = 2;
+
+    // The slowist speed the loop will start with
+    double minMotorSpeed = 6.0;
+
+    // Calculate target heading
+    double targetHeading = Drivetrain.heading() + targetDegrees;
+
+    // Ensure targetHeading is within the range [0, 360)
+    if (targetHeading < 0)
+    {
+        targetHeading += 360.0;
+    }
+    else if (targetHeading >= 360.0)
+    {
+        targetHeading -= 360.0;
+    }
+
+    // Turn right until the target heading is reached
+    while (true)
+    {
+        // Calculate error
+        double error = targetHeading - Drivetrain.heading();
+
+        // Ensure error is within the range [-180, 180)
+        if (error < -180.0)
+        {
+            error += 360.0;
+        }
+        else if (error >= 180.0)
+        {
+            error -= 360.0;
+        }
+
+        // Apply dead zone
+        if (fabs(error) < deadzone)
+        {
+            error = 0.0;
+        }
+
+        // Calculate motor speed based on error
+        double motorSpeed = error * kP;
+
+        // Decrease motor speed as error decreases
+        motorSpeed *= fabs(error / targetDegrees);
+
+        if (fabs(motorSpeed) < minMotorSpeed)
+        {
+            motorSpeed = copysign(minMotorSpeed, motorSpeed);
+        }
+
+        // Set the motor speeds for right turn
+        LeftDriveSmart.setVelocity(motorSpeed, percent);
+        RightDriveSmart.setVelocity(-motorSpeed, percent); // Reverse the direction
+
+        // Spin the motors for right turn
+        LeftDriveSmart.spin(forward);
+        RightDriveSmart.spin(forward);
+
+        // Break the loop if the target heading is reached
+        if (fabs(error) < 2.0)
+        {
+            Drivetrain.stop();
+            Drivetrain.setDriveVelocity(150.0, percent);
+            break;
+        }
+
+        // Wait for a short duration
+        wait(5, msec);
+    }
+
+    // Stop the drivetrain
+    Drivetrain.stop();
+}
+
+void driveStraightFor(double travelDist)
+{
+    double drivetrainLeftSideSpeed, drivetrainRightSideSpeed;
+    double deadzone = .95;                      // Deadzone value between 0 and 1, closer to 1 is more precisely straight
+    double kP = .443;                           // Adjust later, changes degrees of error to a decimal, higher is faster
+    double mod = 2;                             // Adjust later, keeps drivetrain at reasonable speed
+    DrivetrainInertial.setHeading(90, degrees); // Prevents rolling over to 359
+    double currentVelocity = Drivetrain.velocity(percent);
+    Drivetrain.driveFor(travelDist, inches, false);
+    while (!Drivetrain.isDone())
+    {
+        if (DrivetrainInertial.heading(degrees) > (90 * deadzone))
+        {
+            drivetrainLeftSideSpeed = (((DrivetrainInertial.heading(degrees) - 90) * kP) * mod); // (93 - 90) * .1 = .3 * 2 = .6         // .6 * 100 = 60
+            LeftDriveSmart.setVelocity(drivetrainLeftSideSpeed, percent);
+            std::cout << "Left Speed: " << LeftDriveSmart.velocity(percent) << std::endl;
+        }
+        else if (DrivetrainInertial.heading(degrees) < (90 * deadzone))
+        {
+            drivetrainRightSideSpeed = (((90 - DrivetrainInertial.heading(degrees)) * kP) * mod); // (90 - 87) * .1 = .3 * 2 = .6         // .6 * 100 = 60
+            RightDriveSmart.setVelocity(drivetrainRightSideSpeed, percent);
+            std::cout << "Right Speed: " << RightDriveSmart.velocity(percent) << std::endl;
+        }
+        else
+        {
+            LeftDriveSmart.setVelocity(currentVelocity, percent);
+            RightDriveSmart.setVelocity(currentVelocity, percent);
+        }
+        this_thread::sleep_for(10);
+    }
+}
+
+double rate;
+void speed_normal()
+{
+    rate = 1.0;
+}
+
+event Load = event();
+event STOP = event();
+event Intake_Arms = event();
+event message1 = event();
+
+// "when driver control" hat block
+int ondriver_drivercontrol_0()
+{
+    DrivetrainInertial.calibrate();
+    Drivetrain.setStopping(brake);
+    timerr = 15.0;
+    wait(30.0, seconds);
+    Controller1.rumble("....");
+    wait(30.0, seconds);
+    Controller1.rumble("----");
+    wait(30.0, seconds);
+    Controller1.rumble("-.-.-.-.-.-");
+    return 0;
+}
+
+// "when autonomous" hat block
+void onauton_autonomous_0()
+{
+    Drivetrain.setTurnVelocity(5, percent);
+    Drivetrain.setStopping(brake);
+    Drivetrain.setDriveVelocity(150.0, percent);
+    driveStraightFor(-19.5);
+    wait(.15, seconds);
+    turnRightDegrees(38);
+    wait(.15, seconds);
+    driveStraightFor(-13);
+    wait(.15, seconds);
+    Drivetrain.setDriveVelocity(50, percent);
+    Drivetrain.driveFor(forward, 13, inches);
+    Drivetrain.setDriveVelocity(150, percent);
+    turnRightDegrees(180-33);
+    WingsB.set(true);
+    driveStraightFor(-19);
+    turnLeftDegrees(50);
+    Drivetrain.setTurnVelocity(10, percent);
+    turnLeftDegrees(180);
+    turnLeftDegrees(2);
+    WingsB.set(false);
+    driveStraightFor(30);
+    turnLeftDegrees(22);
+    driveStraightFor(6.5);
+    turnRightDegrees(30);
+    WingsB.set(true);
+}
+// "when driver control" hat block
+int ondriver_drivercontrol_4()
+{
+    // Sets variables for both the wings and intake pistons.
+    wings = 1.0;
+    Intake = 1.0;
+    while (true)
+    {
+        if ((Controller1.ButtonX.pressing() || Controller1.ButtonY.pressing()) && Intake == 1.0)
+        {
+            // Intake Arms
+            // If X is pressed and Intake = 1 is puts the intake out :
+            intakeA.set(true);
+            wait(0.01, seconds);
+            // Sets the Intake to 2 so it knows that it was just pressed:
+            Intake = 2.0;
+            // Waits 0.5 seconds to make sure we don't double press the button:
+            wait(0.5, seconds);
+        }
+        else if ((Controller1.ButtonX.pressing() || Controller1.ButtonY.pressing()) && Intake == 2.0)
+        {
+            // If X pressed and intake = 2 than we retract the intake:
+            intakeA.set(false);
+            wait(0.01, seconds);
+            // Sets Intake to 1 so we can put them out again:
+            Intake = 1.0;
+            // Waits 1 second so it cant misfire or be double pressed:
+            wait(1.0, seconds);
+        }
+        else if ((Controller1.ButtonUp.pressing() || Controller1.ButtonRight.pressing()) && wings == 1.0)
+        {
+            // Wing Arms
+            // Same concept as the Intake but just for wings:
+            // If both of the above statements aren't met it comes down to here to check if the up arrow has been pressed:
+            // If pressed it sets the wings out so be can ram more Tri-balls:
+            WingsB.set(true);
+            wait(0.01, seconds);
+            // Sets Wings to 2 so it can keep track if the button has been pressed once before:
+            wings = 2.0;
+            // Waits 0.5 seconds to make sure there is no double pressing:
+            wait(0.5, seconds);
+        }
+        else
+        {
+            if ((Controller1.ButtonUp.pressing() || Controller1.ButtonRight.pressing()) && wings == 2.0)
+            {
+                // If the up arrow has been pressed and wings are = too 2, it will retract the wings:
+                WingsB.set(false);
+                wait(0.01, seconds);
+                // Set wings to 1 so it knows the wings are retracted:
+                wings = 1.0;
+                // Waits 1 second to make sure there is no misfires or double pressing:
+                wait(1.0, seconds);
+            }
+        }
+        wait(5, msec);
+    }
+    return 0;
+}
+
+void VEXcode_driver_task()
+{
+    // Start the driver control tasks....
+    vex::task drive0(ondriver_drivercontrol_0);
+    vex::task drive4(ondriver_drivercontrol_4);
+    while (Competition.isDriverControl() && Competition.isEnabled())
+    {
+        this_thread::sleep_for(10);
+    }
+    drive0.stop();
+    drive4.stop();
+    return;
+}
+
+int main()
+{
+    vex::competition::bStopTasksBetweenModes = false;
+    Competition.autonomous(onauton_autonomous_0);
+    Competition.drivercontrol(VEXcode_driver_task);
+
+    // post event registration
+
+    // set default print color to black
+    printf("\033[30m");
+
+    // wait for rotation sensor to fully initialize
+    wait(30, msec);
+}
